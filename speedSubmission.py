@@ -2,6 +2,7 @@
 import wandb
 from wandb.keras import WandbCallback
 
+import pandas as pd
 import tensorflow as tf
 import cv2 
 import os
@@ -12,6 +13,17 @@ from tensorflow.keras.models import Sequential
 
 # ***** USER INPUTS *****
 modelPath = "/home/tarnoa2/Desktop/speedchallenge/wandb/run-20201022_221123-3o4qtdfc/files/model.h5"
+datasetDir = '/home/tarnoa2/Desktop/speedchallenge/images/images2/'
+
+prePath = '/home/tarnoa2/Desktop/speedchallenge/data/'
+trainDatasetPath = prePath + 'train.mp4'
+testDatasetPath  = prePath + 'test.mp4'
+trainResultPath  = prePath + 'train.txt'
+testResultPath   = prePath + 'test.txt'
+
+imageShape = (480, 640, 3)
+
+BATCH_SIZE = 32
 
 # Model architecture taken from Nvidias "End to End Learning of Self-Driving Cars" paper: https://images.nvidia.com/content/tegra/automotive/images/2016/solutions/pdf/end-to-end-dl-using-px.pdf
 def build_model(input_shape):
@@ -33,51 +45,40 @@ def build_model(input_shape):
     model.add(Dense(1, kernel_initializer='normal', activation='relu'))
 
     return model
-
-def count_frames_manually(path):
-    vid = cv2.VideoCapture(path)
-
-    # Will count the total number of frames in the object
-    count = 0
-    success = 1
-    while success: 
-        # vidObj object calls read 
-        # function extract frames and count while we can get a new frame
-        success, image = vid.read() 
-        count += 1
-
-    vid.release()
-
-    return count - 1 #since one extra is added in the loop
   
-# Code below for extracting frames adapted from: https://www.geeksforgeeks.org/python-program-extract-frames-using-opencv/
-# Function to extract frames 
-def get_frames(path, size=np.inf): 
-    # Path to video file 
-    vidObj = cv2.VideoCapture(path)
+# Function to read in the path to a video file and create a Keras ImageGenerator dataset with the frames in the video
+def build_dataset_from_video(path, labels): 
+    doDatasetGen = False
 
-    if size == np.inf:
-        numFrames = count_frames_manually(path)
-        size = numFrames
-  
-    # checks whether frames were extracted 
-    success = 1
-    frameArray = []
-    count = 0
-    while success and count < size: 
-  
-        # vidObj object calls read 
-        # function extract frames 
-        success, image = vidObj.read() 
+    if doDatasetGen:
+        vidObj = cv2.VideoCapture(path)
+      
+        # checks whether frames were extracted 
+        success = 1
+        count = 0
+        while True:
+            # vidObj object calls read 
+            # Saves the image to the images folder and 
+            success, image = vidObj.read() 
+            if success:
+                cv2.imwrite(datasetDir + "a" + str(count) + ".jpg", image)
+                count += 1
+            else:
+                break
 
-        if len(frameArray) == 0:
-            frameArray = np.zeros((size, image.shape[0], image.shape[1], image.shape[2]))
+        vidObj.release()
 
-        frameArray[count] = image
-        count += 1
+    # All images are now saved to the datasetDir - convert to keras dataset with image_dataset_from_directory
+    # convert to keras dataset using a pandas dataframe
+    fileNames = [("a" + str(i) + ".jpg") for i in range(len(labels))]
+    df =  pd.DataFrame(list(zip(fileNames, labels)), columns=["imageFileNames", "speeds"])
 
-    vidObj.release()
-    return frameArray
+    print(df)
+
+    train_datagen = tf.keras.preprocessing.image.ImageDataGenerator()
+    datagen = train_datagen.flow_from_dataframe(df, directory=datasetDir, x_col="imageFileNames", y_col="speeds", class_mode=None, target_size=(imageShape[0], imageShape[1]), batch_size=BATCH_SIZE, shuffle=True)
+
+    return datagen, imageShape
 
 def get_speeds(path):
     speeds = []
@@ -85,7 +86,12 @@ def get_speeds(path):
         for line in my_file:
             speeds.append(float(line))
 
-    return speeds
+    #Change speeds to np array with right shape
+    size = len(speeds)
+    speeds = np.array(speeds)
+    speeds = np.reshape(speeds, (size, 1))
+
+    return speeds, size
 
 def writeToFile(path, a):
     f = open(path, "w")
@@ -93,7 +99,6 @@ def writeToFile(path, a):
         f.write(str(val) + "\n")
 
     f.close()
-  
 
 # ***** MAIN *****
 if __name__ == '__main__': 
@@ -105,46 +110,38 @@ if __name__ == '__main__':
     if numArguments != 2:
         print("USAGE: \npython3", str(arguments[0]), "{TRAIN / TEST}")
     else:
-        #wandb.init(project="comma_ai_challenge")
+        wandb.init(project="comma_ai_challenge")
         if arguments[1] == "TEST":
             trainDataset = False
 
     if trainDataset:
-        print("*****TRAINING MODEL*****")
+        print("*****Building Dataset to Train Model*****")
 
         # Get Speeds
-        speeds = get_speeds('/home/tarnoa2/Downloads/train.txt')
-        sizeDataset = int(len(speeds) / 100)
+        speeds, datasetSize = get_speeds(trainResultPath)
 
         # Get Input Shape
-        frameArray = get_frames('/home/tarnoa2/Downloads/train.mp4', sizeDataset)
-        shapeImage = frameArray[0].shape
+        datagen, imageShape = build_dataset_from_video(trainDatasetPath, speeds)
 
-        #Change speeds to np array with right shape
-        speeds = np.array(speeds)
-        speeds = np.reshape(speeds, (sizeDataset, 1))
-
-        model = build_model(shapeImage)
+        model = build_model(imageShape)
         model.summary()
-
-        print(np.array(speeds).shape)
-        print(frameArray.shape)
         numEpochs = 100
 
-        model.compile(optimizer=tf.keras.optimizers.Adam(lr=1e-3, decay=1e-3 / numEpochs), loss="mse", metrics="mse")
-        history = model.fit(frameArray, speeds, epochs=numEpochs, callbacks=[WandbCallback()])
+        print("***** Training Model *****")
+        model.compile(optimizer=tf.keras.optimizers.Adam(lr=1e-2, decay=1e-3), loss="sparse_categorical_crossentropy", metrics="mse")
+        history = model.fit(datagen, steps_per_epoch=datasetSize / BATCH_SIZE, epochs=numEpochs, callbacks=[WandbCallback()])
 
         # Save trained model to wandb
         model.save(os.path.join(wandb.run.dir, "model.h5"))
     else:
-        print("*****TESTING TRAINED MODEL*****")
+        print("*****Testing Trained Model*****")
 
         # Get Test dataset
-        frameTestArray = get_frames('/home/tarnoa2/Downloads/test.mp4', 204)
+        frameTestArray = get_frames(testDatasetPath)
 
         trainedModel = tf.keras.models.load_model(modelPath)
 
         predictedSpeeds = trainedModel.predict(frameTestArray)
 
-        writeToFile("test.txt", predictedSpeeds)
+        writeToFile(testResultPath, predictedSpeeds)
 
