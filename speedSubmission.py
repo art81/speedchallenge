@@ -145,7 +145,7 @@ if __name__ == '__main__':
 
 
         print("***** Training Model *****")
-        model.compile(optimizer=tf.keras.optimizers.Adam(lr=1e-2, decay=1e-3), loss="sparse_categorical_crossentropy", metrics="mse")
+        model.compile(optimizer=tf.keras.optimizers.Adam(lr=1e-2, decay=1e-3), loss="mse", metrics=['mse', 'mae', 'mape'])
         history = model.fit(datagen, steps_per_epoch=datasetSize / BATCH_SIZE, epochs=numEpochs, callbacks=[WandbCallback()])
 
         # Save trained model to wandb
