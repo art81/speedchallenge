@@ -24,6 +24,7 @@ testResultPath   = prePath + 'test.txt'
 imageShape = (480, 640, 3)
 
 BATCH_SIZE = 32
+MAX_SPEED = 100
 
 # Model architecture taken from Nvidias "End to End Learning of Self-Driving Cars" paper: https://images.nvidia.com/content/tegra/automotive/images/2016/solutions/pdf/end-to-end-dl-using-px.pdf
 def build_model(input_shape):
@@ -68,17 +69,18 @@ def build_dataset_from_video(path, labels):
 
         vidObj.release()
 
+    print("LABELS***********")
+    labels = labels.flatten()
+
+    print(labels)
+
     # All images are now saved to the datasetDir - convert to keras dataset with image_dataset_from_directory
     # convert to keras dataset using a pandas dataframe
     fileNames = [("a" + str(i) + ".jpg") for i in range(len(labels))]
-    df =  pd.DataFrame(list(zip(fileNames, labels)), columns=["imageFileNames", "speeds"])
+    df =  pd.DataFrame(list(zip(list(fileNames), list(labels))), columns=["imageFileNames", "speeds"])
+    #df = df.astype({'imageFileNames': "string", 'speeds': np.float32}).dtypes
 
-    print(df)
-
-    train_datagen = tf.keras.preprocessing.image.ImageDataGenerator()
-    datagen = train_datagen.flow_from_dataframe(df, directory=datasetDir, x_col="imageFileNames", y_col="speeds", class_mode=None, target_size=(imageShape[0], imageShape[1]), batch_size=BATCH_SIZE, shuffle=True)
-
-    return datagen, imageShape
+    return df
 
 def get_speeds(path):
     speeds = []
@@ -90,6 +92,7 @@ def get_speeds(path):
     size = len(speeds)
     speeds = np.array(speeds)
     speeds = np.reshape(speeds, (size, 1))
+    speeds = speeds / MAX_SPEED #normalize 0 to 1
 
     return speeds, size
 
@@ -120,12 +123,26 @@ if __name__ == '__main__':
         # Get Speeds
         speeds, datasetSize = get_speeds(trainResultPath)
 
-        # Get Input Shape
-        datagen, imageShape = build_dataset_from_video(trainDatasetPath, speeds)
+        # Get Datagenerator
+        df = build_dataset_from_video(trainDatasetPath, speeds)
+
+        print("Dataframe************************")
+        print(df)
+
+        # Convert dataset to a data generator with pandas
+        datagen = tf.keras.preprocessing.image.ImageDataGenerator()
+
+        print("Datagen************************")
+        print(datagen)
+
+        datagen = datagen.flow_from_dataframe(df, directory=datasetDir, x_col="imageFileNames", y_col="speeds", class_mode="raw", target_size=(imageShape[1], imageShape[0]), batch_size=BATCH_SIZE, shuffle=True)
+
+        print(datagen.next())
 
         model = build_model(imageShape)
         model.summary()
         numEpochs = 100
+
 
         print("***** Training Model *****")
         model.compile(optimizer=tf.keras.optimizers.Adam(lr=1e-2, decay=1e-3), loss="sparse_categorical_crossentropy", metrics="mse")
