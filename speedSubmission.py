@@ -110,10 +110,14 @@ if __name__ == '__main__':
     arguments    = sys.argv
     trainDataset = True
 
+    useWandB = None #set by user later
     if numArguments != 2:
         print("USAGE: \npython3", str(arguments[0]), "{TRAIN / TEST}")
     else:
-        wandb.init(project="comma_ai_challenge")
+        useWandB = input("Enter 1 to log to Weights and Biases: ")
+
+        if useWandB:
+            wandb.init(project="comma_ai_challenge")
         if arguments[1] == "TEST":
             trainDataset = False
 
@@ -126,18 +130,10 @@ if __name__ == '__main__':
         # Get Datagenerator
         df = build_dataset_from_video(trainDatasetPath, speeds)
 
-        print("Dataframe************************")
-        print(df)
-
         # Convert dataset to a data generator with pandas
         datagen = tf.keras.preprocessing.image.ImageDataGenerator()
 
-        print("Datagen************************")
-        print(datagen)
-
         datagen = datagen.flow_from_dataframe(df, directory=datasetDir, x_col="imageFileNames", y_col="speeds", class_mode="raw", target_size=(imageShape[1], imageShape[0]), batch_size=BATCH_SIZE, shuffle=True)
-
-        print(datagen.next())
 
         model = build_model(imageShape)
         model.summary()
@@ -146,8 +142,11 @@ if __name__ == '__main__':
 
         print("***** Training Model *****")
         model.compile(optimizer=tf.keras.optimizers.Adam(lr=1e-2, decay=1e-3), loss="mse", metrics=['mse', 'mae', 'mape'])
-        history = model.fit(datagen, steps_per_epoch=datasetSize / BATCH_SIZE, epochs=numEpochs, callbacks=[WandbCallback()])
 
+        if useWandB:
+            history = model.fit(datagen, steps_per_epoch=datasetSize / BATCH_SIZE, epochs=numEpochs, callbacks=[WandbCallback()])
+        else:
+            history = model.fit(datagen, steps_per_epoch=datasetSize / BATCH_SIZE, epochs=numEpochs)
         # Save trained model to wandb
         model.save(os.path.join(wandb.run.dir, "model.h5"))
     else:
