@@ -2,67 +2,32 @@ import tensorflow as tf
 import cv2 
 import numpy as np
 from tensorflow.keras.layers import Conv2D,Activation,Lambda,Flatten,Dense
+from tensorflow.keras.models import Sequential
 
 # Model architecture taken from Nvidias "End to End Learning of Self-Driving Cars" paper: https://images.nvidia.com/content/tegra/automotive/images/2016/solutions/pdf/end-to-end-dl-using-px.pdf
 def build_model(input_shape):
-    # Input Normalization
-    x = Lambda(lambda x: x/255.0)(input_shape)
+    #create model
+    model = Sequential()
 
-    # Layer 1: CONV-RELU 24 5x5
-    x = Conv2D(24, (5, 5), strides=(2, 2), padding="valid")(x)
-    x = Activation("relu")(x)
-    # Layer 2: CONV-RELU 36 5x5
-    x = Conv2D(36, (5, 5), strides=(2, 2), padding="valid")(x)
-    x = Activation("relu")(x)
-    # Layer 3: CONV-RELU 48 5x5
-    x = Conv2D(48, (5, 5), strides=(2, 2), padding="valid")(x)
-    x = Activation("relu")(x)
-    # Layer 4: CONV-RELU 64 3x3
-    x = Conv2D(64, (3, 3), padding="valid")(x)
-    x = Activation("relu")(x)
-    # Layer 5: CONV-RELU 64 3x3
-    x = Conv2D(64, (3, 3), padding="valid")(x)
-    x = Activation("relu")(x)
-
-    # Flatten Layer
-    x = Flatten()(x)
-
-    # Fully Connected Layers
-    x = Dense(1164, kernel_initializer='normal', activation='relu')(x)
-    x = Dense(100, kernel_initializer='normal', activation='relu')(x)
-    x = Dense(50, kernel_initializer='normal', activation='relu')(x)
-    x = Dense(10, kernel_initializer='normal', activation='relu')(x)
-    x = Dense(1, kernel_initializer='normal', name="Linear")(x)
-
-    return x
-
-def build_model():
-    # Shape of dataset images is...
-
-
-    input_shape = tf.keras.Input(shape=(480, 640, 3))
-    model = FrankNet.build_linear_branch(inputs)
-    angularVelocity = FrankNet.build_angular_branch(inputs)
-
-    model = tf.keras.Model(inputs=inputs, outputs=[
-        linearVelocity, angularVelocity], name="FrankNet")
+    #add model layers
+    model.add(Lambda(lambda x: x/255.0, input_shape=input_shape))
+    model.add(Conv2D(24, (5, 5), strides=(2, 2), padding="valid", activation='relu'))
+    model.add(Conv2D(36, (5, 5), strides=(2, 2), padding="valid", activation='relu'))
+    model.add(Conv2D(48, (5, 5), strides=(2, 2), padding="valid", activation='relu'))
+    model.add(Conv2D(64, (3, 3), padding="valid", activation='relu'))
+    model.add(Conv2D(64, (3, 3), padding="valid", activation='relu'))
+    model.add(Flatten())
+    model.add(Dense(1164, kernel_initializer='normal', activation='relu'))
+    model.add(Dense(100, kernel_initializer='normal', activation='relu'))
+    model.add(Dense(50, kernel_initializer='normal', activation='relu'))
+    model.add(Dense(10, kernel_initializer='normal', activation='relu'))
+    model.add(Dense(1, kernel_initializer='normal', activation='relu'))
 
     return model
-
-def train_model():
-    # Shape of dataset images is...
-
-
-    input_shape = tf.keras.Input(shape=(X, Y, Z))
-    model = build_model(input_shape)
-
-observation = []
-linear = []
-angular = []
   
 # Code below for extracting frames adapted from: https://www.geeksforgeeks.org/python-program-extract-frames-using-opencv/
 # Function to extract frames 
-def getFrames(path, size): 
+def get_frames(path, size): 
     # Path to video file 
     vidObj = cv2.VideoCapture(path) 
   
@@ -73,26 +38,57 @@ def getFrames(path, size):
     success = 1
     frameArray = []
   
-    while success: 
+    while success and count < size: 
   
         # vidObj object calls read 
         # function extract frames 
         success, image = vidObj.read() 
-        print(np.max(image))
 
         if len(frameArray) == 0:
-            frameArray = np.zeros((size, image.shape[0], image.shape[1], image.shape[2]), dtype=np.int8)
+            frameArray = np.zeros((size, image.shape[0], image.shape[1], image.shape[2]))
 
         frameArray[count] = image
   
         count += 1
+
+    return frameArray
+
+def get_speeds(path, size):
+    speeds = []
+    count = 0
+    with open(path) as my_file:
+        for line in my_file:
+            if count < size:
+                speeds.append(float(line))
+                count += 1
+            else:
+                return speeds
+
+    return speeds
   
 
 # ***** MAIN *****
 if __name__ == '__main__': 
+    sizeDataset = int(20400 / 100)
   
     # Get Input Shape
-    frameArray = getFrames('/home/tarnoa2/Downloads/train.mp4', 20400)
-    shapeImage = frameArray(0).shape
+    frameArray = get_frames('/home/tarnoa2/Downloads/train.mp4', sizeDataset)
+    speeds     = get_speeds('/home/tarnoa2/Downloads/train.txt', sizeDataset)
+    shapeImage = frameArray[0].shape
 
-    print(shapeImage)
+    #Change speeds to np array with right shape
+    speeds = np.array(speeds)
+    speeds = np.reshape(speeds, (sizeDataset, 1))
+
+    model = build_model(shapeImage)
+    model.summary()
+
+    print(np.array(speeds).shape)
+    print(frameArray.shape)
+    numEpochs = 100
+
+    model.compile(optimizer=tf.keras.optimizers.Adam(lr=1e-3, decay=1e-3 / numEpochs), loss="mse", metrics="mse")
+    history = model.fit(frameArray, speeds, epochs=numEpochs)
+
+    # Save trained model
+    model.save('./')
