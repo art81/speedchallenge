@@ -1,20 +1,18 @@
-# Init W and B
-import wandb
-from wandb.keras import WandbCallback
-
 import pandas as pd
 import tensorflow as tf
 import cv2 
 import os
 import sys
 import numpy as np
-from tensorflow.keras.layers import Conv2D,Activation,Lambda,Flatten,Dense
+from tensorflow.keras.layers import Input,Flatten,Dense,ConvLSTM2D,BatchNormalization,MaxPooling3D,TimeDistributed
 from tensorflow.keras.models import Sequential
+
+from datagenerator_LSTM_Class import DataGenerator_LSTM
 
 homePath = os.path.expanduser("~")
 
 # ***** GLOBAL USER INPUTS *****
-modelPath = homePath + "/Desktop/speedchallenge/wandb/run-20201027_174505-15b8a5sm/files/model.h5"
+modelPath = homePath + "/Desktop/speedchallenge/wandb/run-20201107_194431-3lvjr1fo/files/model.h5"
 
 prePath = homePath + "/Desktop/speedchallenge/data/"
 trainDatasetPath = prePath + 'train/'
@@ -36,19 +34,33 @@ def build_model(input_shape):
     #create model
     model = Sequential()
 
+    print(input_shape)
+    model.add(Input(input_shape))
+
     #add model layers
-    model.add(Lambda(lambda x: x/255.0, input_shape=input_shape))
-    model.add(Conv2D(24, (5, 5), strides=(2, 2), padding="valid", activation='relu'))
-    model.add(Conv2D(36, (5, 5), strides=(2, 2), padding="valid", activation='relu'))
-    model.add(Conv2D(48, (5, 5), strides=(2, 2), padding="valid", activation='relu'))
-    model.add(Conv2D(64, (3, 3), padding="valid", activation='relu'))
-    model.add(Conv2D(64, (3, 3), padding="valid", activation='relu'))
-    model.add(Flatten())
-    model.add(Dense(1164, kernel_initializer='normal', activation='relu'))
-    model.add(Dense(100, kernel_initializer='normal', activation='relu'))
-    model.add(Dense(50, kernel_initializer='normal', activation='relu'))
-    model.add(Dense(10, kernel_initializer='normal', activation='relu'))
-    model.add(Dense(1, kernel_initializer='normal', activation='sigmoid'))
+    model.add(ConvLSTM2D(filters=24, kernel_size=(5, 5), strides=(2, 2), data_format='channels_last', padding="same", activation='tanh', return_sequences=True))
+
+    model.add(BatchNormalization())
+    model.add(MaxPooling3D(pool_size=(1, 2, 2), padding='same', data_format='channels_first'))
+
+    model.add(ConvLSTM2D(filters=48, kernel_size=(5, 5), strides=(2, 2), data_format='channels_last', padding="same", activation='tanh', return_sequences=True))
+
+    model.add(BatchNormalization())
+    model.add(MaxPooling3D(pool_size=(1, 3, 3), padding='same', data_format='channels_first'))
+
+    model.add(ConvLSTM2D(filters=32, kernel_size=(3, 3), strides=(1, 1), data_format='channels_last', padding='same', activation='tanh', return_sequences=True))
+
+    model.add(BatchNormalization())
+    model.add(MaxPooling3D(pool_size=(1, 2, 2), padding='same', data_format='channels_first'))
+
+    model.add(TimeDistributed(Flatten()))
+    model.add(TimeDistributed(Dense(1024, activation='relu')))
+    model.add(TimeDistributed(Dense(216, activation='relu')))
+    model.add(TimeDistributed(Dense(64, activation='relu')))
+    model.add(TimeDistributed(Dense(32, activation='relu')))
+    #model.add(Flatten())
+    model.add(TimeDistributed(Dense(1, activation='sigmoid')))
+    #model.add(Dense(1, activation='sigmoid'))
 
     return model
 
@@ -73,30 +85,11 @@ def generate_dataset(videoPath, datasetPath):
   
 # Function reads in the path to a video file and creates a Keras datagenerator with the frames in the video and the labels array that is passed as an input
 # If labels is None then a datagen is created with just the images - useful for predicting speeds from a given video
-def get_datagen_from_dataset_and_labels(datasetPath, labels=None): 
-    global imageShape, modelPath
-
+def get_imageFileNames(datasetPath): 
     datasetSize = len(os.listdir(datasetPath))
     fileNames = [(str(i) + ".jpg") for i in range(datasetSize)]
 
-    # All images are saved in datasetPath - convert to keras dataset with image_dataset_from_directory
-    if labels is None:
-        df =  pd.DataFrame(list(fileNames), columns=["imageFileNames"])
-
-        # Convert dataset to a data generator with pandas
-        datagen = tf.keras.preprocessing.image.ImageDataGenerator()
-        datagen = datagen.flow_from_dataframe(df, directory=datasetPath, x_col="imageFileNames", class_mode=None, target_size=(imageShape[1], imageShape[0]), batch_size=BATCH_SIZE, shuffle=True)
-    else:
-        labels = labels.flatten()
-
-        # convert to keras dataset using a pandas dataframe
-        df =  pd.DataFrame(list(zip(list(fileNames), list(labels))), columns=["imageFileNames", "speeds"])
-
-        # Convert dataset to a data generator with pandas
-        datagen = tf.keras.preprocessing.image.ImageDataGenerator()
-        datagen = datagen.flow_from_dataframe(df, directory=datasetPath, x_col="imageFileNames", y_col="speeds", class_mode="raw", target_size=(imageShape[1], imageShape[0]), batch_size=BATCH_SIZE, shuffle=False)
-
-    return datagen, datasetSize
+    return fileNames, datasetSize
 
 # Returns an array of values from a txt file that has a new value on each line - in this application these values are speeds
 def get_speeds(path):
@@ -108,7 +101,7 @@ def get_speeds(path):
     #Change speeds to np array with right shape
     size = len(speeds)
     speeds = np.array(speeds)
-    speeds = np.reshape(speeds, (size, 1))
+    speeds = np.reshape(speeds, (size,))
     speeds = speeds / MAX_SPEED #normalize 0 to 1
 
     return speeds
@@ -128,12 +121,17 @@ if __name__ == '__main__':
     arguments    = sys.argv
 
     useWandB = None #set by user later
-    if numArguments != 2:
+    if numArguments != 2 or not (arguments[1] in ["BUILD", "TRAIN", "TEST"]):
         print("USAGE: \npython3", str(arguments[0]), "{BUILD / TRAIN / TEST}")
     else:
         useWandB = input("Enter 1 to log to Weights and Biases: ")
+        useWandB = (useWandB == "1")
 
         if useWandB:
+            # Init W and B
+            import wandb
+            from wandb.keras import WandbCallback
+
             wandb.init(project="comma_ai_challenge")
 
     # Main menu logic
@@ -146,25 +144,30 @@ if __name__ == '__main__':
     elif arguments[1] == "TRAIN":
         print("*****Training Model from Built Dataset*****")
 
-        # Get Speeds
+        # Get Speeds and image file names
         speeds = get_speeds(trainResultPath)
+        imageFileNames, datasetSize = get_imageFileNames(trainDatasetPath)
 
-        # Get Datagenerator
-        datagen, datasetSize = get_datagen_from_dataset_and_labels(trainDatasetPath, speeds)
+        # Get Datagenerator from imported custom py file
+        DG = DataGenerator_LSTM(speeds, imageFileNames, trainDatasetPath, to_fit=True, batch_size=BATCH_SIZE, image_shape=(480, 640), n_channels=3, shuffle=False)
 
-        model = build_model(imageShape)
+        batch, y = DG.__getitem__(0)
+        print("Batch Shape: " + str(batch.shape))
+        print("Output Value: " + str(y))
+
+        model = build_model((BATCH_SIZE, imageShape[0], imageShape[1], imageShape[2]))
         model.summary()
 
         print("***** Training Model *****")
         model.compile(optimizer=tf.keras.optimizers.Adam(lr=1e-2, decay=1e-3), loss="mse", metrics=['mse', 'mae', 'mape'])
 
         if useWandB:
-            history = model.fit(datagen, steps_per_epoch=datasetSize / BATCH_SIZE, epochs=NUM_EPOCHS, callbacks=[WandbCallback()])
+            history = model.fit(DG, steps_per_epoch=datasetSize / BATCH_SIZE, epochs=NUM_EPOCHS, callbacks=[WandbCallback()])
 
             # Save trained model to wandb
             model.save(os.path.join(wandb.run.dir, "model.h5"))
         else:
-            history = model.fit(datagen, steps_per_epoch=datasetSize / BATCH_SIZE, epochs=NUM_EPOCHS)
+            history = model.fit(DG.generator_wrapper(), steps_per_epoch=datasetSize, epochs=NUM_EPOCHS)
 
     elif arguments[1] == "TEST":
         print("*****Testing Trained Model*****")
