@@ -1,6 +1,7 @@
+#!/usr/bin/python3
+
 import pandas as pd
 import tensorflow as tf
-import cv2 
 import os
 import sys
 import numpy as np
@@ -121,8 +122,9 @@ if __name__ == '__main__':
     arguments    = sys.argv
 
     useWandB = None #set by user later
-    if numArguments != 2 or not (arguments[1] in ["BUILD", "TRAIN", "TEST"]):
+    if numArguments != 2 or (not arguments[1] is None and not (arguments[1] in ["BUILD", "TRAIN", "TEST"])):
         print("USAGE: \npython3", str(arguments[0]), "{BUILD / TRAIN / TEST}")
+        sys.exit(0)
     else:
         useWandB = input("Enter 1 to log to Weights and Biases: ")
         useWandB = (useWandB == "1")
